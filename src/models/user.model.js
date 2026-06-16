@@ -204,11 +204,60 @@ async function logActivity(logData) {
         `);
 }
 
+/**
+ * Verificar si la contraseña coincide con el hash almacenado.
+ * Usa fn_HashPassword en SQL (mismo método que los datos semilla).
+ *
+ * @param {number} usuarioId
+ * @param {string} password - Contraseña en texto plano
+ * @returns {Promise<boolean>} true si coincide
+ */
+async function verifyPassword(usuarioId, password) {
+    const pool = getPool();
+
+    const result = await pool.request()
+        .input('usuarioId', sql.Int, usuarioId)
+        .input('password', sql.NVarChar(100), password)
+        .query(`
+            SELECT CASE
+                WHEN PasswordHash = dbo.fn_HashPassword(@password, PasswordSalt)
+                THEN 1 ELSE 0
+            END AS coincide
+            FROM dbo.Usuario
+            WHERE UsuarioID = @usuarioId
+        `);
+
+    return result.recordset[0]?.coincide === 1;
+}
+
+/**
+ * Registrar un intento fallido. Bloquea 15 min tras 5 intentos.
+ *
+ * @param {number} usuarioId
+ */
+async function registrarIntentoFallido(usuarioId) {
+    const pool = getPool();
+
+    await pool.request()
+        .input('usuarioId', sql.Int, usuarioId)
+        .query(`
+            UPDATE dbo.Usuario
+            SET IntentosFallidos = IntentosFallidos + 1,
+                BloqueadoHasta = CASE
+                    WHEN IntentosFallidos >= 4 THEN DATEADD(MINUTE, 15, GETDATE())
+                    ELSE BloqueadoHasta
+                END
+            WHERE UsuarioID = @usuarioId
+        `);
+}
+
 module.exports = {
     getAllUsers,
     findByUsername,
     getPermissionsByRole,
     getSedesByUser,
     updateLastAccess,
-    logActivity
+    logActivity,
+    verifyPassword,
+    registrarIntentoFallido
 };

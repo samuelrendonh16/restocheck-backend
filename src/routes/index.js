@@ -8,6 +8,12 @@ const router = express.Router();
 // Importar rutas de módulos
 const authRoutes = require('./auth.routes');
 const tareasRoutes = require('./tareas.routes');
+const panelRoutes = require('./panel.routes');
+const sedeRoutes = require('./sede.routes');
+const usuarioRoutes = require('./usuario.routes');
+const rolRoutes = require('./rol.routes');
+const plantillaConfigRoutes = require('./plantilla.routes');
+const reportesRoutes = require('./reportes.routes');
 
 /**
  * GET /api/health
@@ -41,5 +47,11 @@ router.get('/', (req, res) => {
 
 router.use('/auth', authRoutes);
 router.use('/tareas', tareasRoutes);
+router.use('/panel', panelRoutes);
+router.use('/sedes', sedeRoutes);
+router.use('/usuarios', usuarioRoutes);
+router.use('/roles', rolRoutes);
+router.use('/plantillas-config', plantillaConfigRoutes);
+router.use('/reportes', reportesRoutes);
 
 module.exports = router;

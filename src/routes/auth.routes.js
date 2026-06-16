@@ -26,4 +26,11 @@ router.get('/users/:id', authController.getUserById);
  */
 router.post('/login', authController.loginTest);
 
+/**
+ * POST /api/auth/login-real
+ * Login real con validación de contraseña
+ * Body: { "nombreUsuario": "superadmin", "password": "Admin123!" }
+ */
+router.post('/login-real', authController.loginReal);
+
 module.exports = router;

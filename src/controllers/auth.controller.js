@@ -191,8 +191,151 @@ async function getUserById(req, res, next) {
     }
 }
 
+/**
+ * Login real (con validación de contraseña)
+ * POST /api/auth/login-real
+ *
+ * Body: { "nombreUsuario": "superadmin", "password": "Admin123!" }
+ */
+async function loginReal(req, res, next) {
+    try {
+        const { nombreUsuario, password } = req.body;
+
+        // Validación básica
+        if (!nombreUsuario || !password) {
+            const error = new Error('Usuario y contraseña son requeridos');
+            error.statusCode = 400;
+            throw error;
+        }
+
+        // Buscar usuario
+        const user = await userModel.findByUsername(nombreUsuario);
+
+        // Mensaje genérico para no revelar si el usuario existe
+        if (!user) {
+            const error = new Error('Credenciales inválidas');
+            error.statusCode = 401;
+            throw error;
+        }
+
+        // Verificar si está activo
+        if (!user.Activo) {
+            const error = new Error('Usuario desactivado');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        // Verificar bloqueo temporal
+        if (user.BloqueadoHasta && new Date(user.BloqueadoHasta) > new Date()) {
+            const error = new Error('Usuario bloqueado temporalmente. Intenta más tarde.');
+            error.statusCode = 403;
+            throw error;
+        }
+
+        // Obtener IP del cliente
+        const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+
+        // ⭐ VALIDAR CONTRASEÑA
+        const passwordCorrecta = await userModel.verifyPassword(user.UsuarioID, password);
+
+        if (!passwordCorrecta) {
+            // Registrar intento fallido (y posible bloqueo)
+            await userModel.registrarIntentoFallido(user.UsuarioID);
+
+            // Registrar en log
+            await userModel.logActivity({
+                empresaId: user.EmpresaID,
+                usuarioId: user.UsuarioID,
+                accion: 'LOGIN_FALLIDO',
+                entidad: 'SESION',
+                entidadId: user.UsuarioID,
+                descripcion: 'Contraseña incorrecta',
+                ip: clientIP
+            });
+
+            const error = new Error('Credenciales inválidas');
+            error.statusCode = 401;
+            throw error;
+        }
+
+        // ✅ Contraseña correcta - obtener permisos y sedes
+        const permisos = await userModel.getPermissionsByRole(user.RolID);
+        const sedes = await userModel.getSedesByUser(
+            user.UsuarioID,
+            user.EmpresaID,
+            user.AccesoGlobal
+        );
+
+        // Actualizar último acceso (resetea intentos fallidos y bloqueo)
+        await userModel.updateLastAccess(user.UsuarioID, clientIP);
+
+        // Registrar login exitoso
+        await userModel.logActivity({
+            empresaId: user.EmpresaID,
+            usuarioId: user.UsuarioID,
+            accion: 'LOGIN',
+            entidad: 'SESION',
+            entidadId: user.UsuarioID,
+            descripcion: 'Inicio de sesión exitoso',
+            ip: clientIP
+        });
+
+        // Estructurar respuesta (MISMA estructura que loginTest)
+        const response = {
+            success: true,
+            message: 'Login exitoso',
+            data: {
+                usuario: {
+                    id: user.UsuarioID,
+                    nombreCompleto: user.NombreCompleto,
+                    nombreUsuario: user.NombreUsuario,
+                    email: user.Email,
+                    empresaId: user.EmpresaID,
+                    requiereCambioPass: user.RequiereCambioPass
+                },
+                empresa: {
+                    id: user.EmpresaID,
+                    nombre: user.NombreEmpresa,
+                    codigo: user.CodigoEmpresa
+                },
+                rol: {
+                    id: user.RolID,
+                    nombre: user.NombreRol,
+                    codigo: user.CodigoRol,
+                    accesoGlobal: user.AccesoGlobal,
+                    requiereSede: user.RequiereSede
+                },
+                permisos: permisos.map(p => ({
+                    codigo: p.Codigo,
+                    nombre: p.Nombre,
+                    modulo: p.Modulo
+                })),
+                sedes: sedes.map(s => ({
+                    id: s.SedeID,
+                    nombre: s.Nombre,
+                    codigo: s.CodigoCorto,
+                    ciudad: s.Ciudad,
+                    tipo: s.TipoSede,
+                    esPrincipal: s.EsPrincipal
+                })),
+                sedeActiva: sedes.length > 0 ? {
+                    id: sedes.find(s => s.EsPrincipal)?.SedeID || sedes[0].SedeID,
+                    nombre: sedes.find(s => s.EsPrincipal)?.Nombre || sedes[0].Nombre,
+                    codigo: sedes.find(s => s.EsPrincipal)?.CodigoCorto || sedes[0].CodigoCorto
+                } : null
+            }
+        };
+
+        res.json(response);
+
+    } catch (error) {
+        next(error);
+    }
+}
+
 module.exports = {
     listUsers,
     loginTest,
+    loginReal,
     getUserById
 };
