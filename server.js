@@ -14,29 +14,24 @@ const PORT = process.env.PORT || 3000;
  * Iniciar el servidor
  */
 async function startServer() {
+    // Iniciar servidor HTTP PRIMERO (no depende de la BD)
+    app.listen(PORT, () => {
+        console.log('');
+        console.log('╔════════════════════════════════════════════════════╗');
+        console.log('║      🍽️  RESTOCHECK API - SERVIDOR INICIADO        ║');
+        console.log('╠════════════════════════════════════════════════════╣');
+        console.log(`║  🌐 Puerto: ${String(PORT).padEnd(39)}║`);
+        console.log(`║  📁 Entorno: ${(process.env.NODE_ENV || 'development').padEnd(30)}║`);
+        console.log('╚════════════════════════════════════════════════════╝');
+        console.log('');
+    });
+
+    // Intentar conectar a la BD (sin tumbar el servidor si falla)
     try {
-        // Conectar a la base de datos
         await connectDB();
-
-        // Iniciar servidor HTTP
-        app.listen(PORT, () => {
-            console.log('');
-            console.log('╔════════════════════════════════════════════════════╗');
-            console.log('║      🍽️  RESTOCHECK API - SERVIDOR INICIADO        ║');
-            console.log('╠════════════════════════════════════════════════════╣');
-            console.log(`║  🌐 URL: http://localhost:${PORT}                    ║`);
-            console.log(`║  📁 Entorno: ${(process.env.NODE_ENV || 'development').padEnd(30)}║`);
-            console.log('╚════════════════════════════════════════════════════╝');
-            console.log('');
-            console.log('Endpoints disponibles:');
-            console.log(`  GET http://localhost:${PORT}/api/health`);
-            console.log(`  GET http://localhost:${PORT}/api/`);
-            console.log('');
-        });
-
     } catch (error) {
-        console.error('❌ Error fatal al iniciar:', error.message);
-        process.exit(1);
+        console.error('⚠️  No se pudo conectar a la base de datos:', error.message);
+        console.error('   El servidor sigue activo. Las rutas que usan BD fallarán hasta que se configure.');
     }
 }
 
