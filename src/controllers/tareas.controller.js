@@ -4,6 +4,7 @@
 
 const plantillaModel = require('../models/plantilla.model');
 const ejecucionModel = require('../models/ejecucion.model');
+const rolModel = require('../models/rol.model');
 
 /**
  * GET /api/tareas/categorias/:tipo
@@ -70,30 +71,58 @@ async function getPlantillas(req, res, next) {
  */
 async function iniciarEjecucion(req, res, next) {
     try {
-        const { plantillaId, sedeId, usuarioId } = req.body;
-        
-        console.log('📥 Iniciando ejecución:', { plantillaId, sedeId, usuarioId });
-        
+        const { plantillaId, sedeId, usuarioId, rolId } = req.body;
+
+        console.log('📥 Iniciando ejecución:', { plantillaId, sedeId, usuarioId, rolId });
+
         if (!plantillaId || !sedeId || !usuarioId) {
             return res.status(400).json({
                 success: false,
                 error: 'plantillaId, sedeId y usuarioId son requeridos'
             });
         }
-        
+
+        // ⭐ VALIDACIÓN DE PERMISOS (parche temporal)
+        if (!rolId) {
+            return res.status(403).json({
+                success: false,
+                error: { message: 'No se pudo verificar permisos (rolId ausente)' }
+            });
+        }
+
+        // 1. Averiguar el tipo de la plantilla
+        const tipoPlantilla = await plantillaModel.getTipoPlantilla(parseInt(plantillaId));
+
+        // 2. Determinar qué permiso se requiere según el tipo
+        const permisoRequerido = tipoPlantilla === 'AUDITORIA'
+            ? 'EJECUTAR_AUDITORIA'
+            : 'EJECUTAR_CHECKLIST';
+
+        // 3. Verificar que el rol tenga ese permiso
+        const tienePermiso = await rolModel.rolTienePermiso(parseInt(rolId), permisoRequerido);
+
+        if (!tienePermiso) {
+            console.log('🚫 Permiso denegado:', permisoRequerido, 'para rol:', rolId);
+            return res.status(403).json({
+                success: false,
+                error: { message: `No tienes permiso para ejecutar ${tipoPlantilla === 'AUDITORIA' ? 'auditorías' : 'checklists'}` }
+            });
+        }
+
+        // ✅ Tiene permiso, proceder
         const ejecucion = await ejecucionModel.iniciarEjecucion(
             parseInt(plantillaId),
             parseInt(sedeId),
             parseInt(usuarioId)
         );
-        
+
         console.log('✅ Ejecución creada:', ejecucion.id);
-        
+
         res.json({
             success: true,
             data: ejecucion
         });
-        
+
     } catch (error) {
         console.log('❌ Error:', error.message);
         next(error);

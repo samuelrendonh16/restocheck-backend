@@ -88,8 +88,26 @@ async function actualizarPermisoRol(rolId, permisoId, habilitado) {
     return { success: true };
 }
 
+/**
+ * Verificar si un rol tiene un permiso habilitado
+ */
+async function rolTienePermiso(rolId, codigoPermiso) {
+    const pool = getPool();
+    const result = await pool.query(`
+        SELECT COUNT(*) AS total
+        FROM RolPermiso rp
+        INNER JOIN Permiso p ON rp.PermisoID = p.PermisoID
+        WHERE rp.RolID = $1
+          AND p.Codigo = $2
+          AND rp.Habilitado = TRUE
+          AND p.Activo = TRUE
+    `, [rolId, codigoPermiso]);
+    return parseInt(result.rows[0].total) > 0;
+}
+
 module.exports = {
     getRoles,
     getMatrizPermisos,
-    actualizarPermisoRol
+    actualizarPermisoRol,
+    rolTienePermiso
 };

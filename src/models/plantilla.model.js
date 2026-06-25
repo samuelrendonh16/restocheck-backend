@@ -171,6 +171,20 @@ async function eliminarItem(itemId) {
     return { success: true };
 }
 
+/**
+ * Obtener el tipo (CHECKLIST/AUDITORIA) de una plantilla
+ */
+async function getTipoPlantilla(plantillaId) {
+    const pool = getPool();
+    const result = await pool.query(`
+        SELECT tp.Codigo AS "tipoCodigo"
+        FROM Plantilla p
+        INNER JOIN TipoPlantilla tp ON p.TipoPlantillaID = tp.TipoPlantillaID
+        WHERE p.PlantillaID = $1
+    `, [plantillaId]);
+    return result.rows[0]?.tipoCodigo || null;
+}
+
 module.exports = {
     getCategoriasPorTipo,
     getPlantillasPorCategoria,
@@ -179,5 +193,6 @@ module.exports = {
     eliminarPlantilla,
     getItemsPlantilla,
     crearItem,
-    eliminarItem
+    eliminarItem,
+    getTipoPlantilla
 };
