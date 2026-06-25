@@ -1,29 +1,25 @@
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 
 /**
  * Listar todas las sedes de una empresa
  */
 async function getSedes(empresaId) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT
-                s.SedeID AS id,
-                s.Nombre AS nombre,
-                s.CodigoCorto AS codigoCorto,
-                s.Ciudad AS ciudad,
-                ts.Nombre AS tipoSede,
-                ts.TipoSedeID AS tipoSedeId,
-                s.Activa AS activa
-            FROM dbo.Sede s
-            INNER JOIN dbo.TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
-            WHERE s.EmpresaID = @empresaId AND s.Activa = 1
-            ORDER BY s.Nombre
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            s.SedeID AS "id",
+            s.Nombre AS "nombre",
+            s.CodigoCorto AS "codigoCorto",
+            s.Ciudad AS "ciudad",
+            ts.Nombre AS "tipoSede",
+            ts.TipoSedeID AS "tipoSedeId",
+            s.Activa AS "activa"
+        FROM Sede s
+        INNER JOIN TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
+        WHERE s.EmpresaID = $1 AND s.Activa = TRUE
+        ORDER BY s.Nombre
+    `, [empresaId]);
+    return result.rows;
 }
 
 /**
@@ -31,20 +27,12 @@ async function getSedes(empresaId) {
  */
 async function crearSede(empresaId, nombre, codigoCorto, tipoSedeId, ciudad) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('tipoSedeId', sql.Int, tipoSedeId)
-        .input('nombre', sql.NVarChar(100), nombre)
-        .input('codigoCorto', sql.Char(3), codigoCorto)
-        .input('ciudad', sql.NVarChar(100), ciudad || null)
-        .query(`
-            INSERT INTO dbo.Sede (EmpresaID, TipoSedeID, Nombre, CodigoCorto, Ciudad, CreadoPor)
-            OUTPUT INSERTED.SedeID AS id, INSERTED.Nombre AS nombre, INSERTED.CodigoCorto AS codigoCorto
-            VALUES (@empresaId, @tipoSedeId, @nombre, @codigoCorto, @ciudad, 'CONFIG')
-        `);
-
-    return result.recordset[0];
+    const result = await pool.query(`
+        INSERT INTO Sede (EmpresaID, TipoSedeID, Nombre, CodigoCorto, Ciudad, CreadoPor)
+        VALUES ($1, $2, $3, $4, $5, 'CONFIG')
+        RETURNING SedeID AS "id", Nombre AS "nombre", CodigoCorto AS "codigoCorto"
+    `, [empresaId, tipoSedeId, nombre, codigoCorto, ciudad || null]);
+    return result.rows[0];
 }
 
 /**
@@ -52,37 +40,28 @@ async function crearSede(empresaId, nombre, codigoCorto, tipoSedeId, ciudad) {
  */
 async function eliminarSede(sedeId) {
     const pool = getPool();
-
-    await pool.request()
-        .input('sedeId', sql.Int, sedeId)
-        .query(`
-            UPDATE dbo.Sede
-            SET Activa = 0,
-                FechaModificacion = GETDATE(),
-                ModificadoPor = 'CONFIG'
-            WHERE SedeID = @sedeId
-        `);
-
+    await pool.query(`
+        UPDATE Sede
+        SET Activa = FALSE, FechaModificacion = NOW(), ModificadoPor = 'CONFIG'
+        WHERE SedeID = $1
+    `, [sedeId]);
     return { success: true };
 }
 
 /**
- * Listar tipos de sede (para el dropdown del formulario)
+ * Listar tipos de sede
  */
 async function getTiposSede() {
     const pool = getPool();
-
-    const result = await pool.request()
-        .query(`
-            SELECT
-                TipoSedeID AS id,
-                Nombre AS nombre
-            FROM dbo.TipoSede
-            WHERE Activo = 1
-            ORDER BY Nombre
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            TipoSedeID AS "id",
+            Nombre AS "nombre"
+        FROM TipoSede
+        WHERE Activo = TRUE
+        ORDER BY Nombre
+    `);
+    return result.rows;
 }
 
 module.exports = {

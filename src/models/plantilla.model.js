@@ -1,31 +1,26 @@
 /**
- * PLANTILLA MODEL
+ * PLANTILLA MODEL - PostgreSQL
  */
 
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 
 /**
  * Obtener categorías por tipo (CHECKLIST o AUDITORIA)
  */
 async function getCategoriasPorTipo(tipoCodigo) {
     const pool = getPool();
-    
-    const result = await pool.request()
-        .input('tipoCodigo', sql.VarChar(20), tipoCodigo)
-        .query(`
-            SELECT 
-                cp.CategoriaID AS id,
-                cp.Codigo AS codigo,
-                cp.Nombre AS nombre,
-                cp.Orden AS orden
-            FROM dbo.CategoriaPlantilla cp
-            INNER JOIN dbo.TipoPlantilla tp ON cp.TipoPlantillaID = tp.TipoPlantillaID
-            WHERE tp.Codigo = @tipoCodigo
-              AND cp.Activo = 1
-            ORDER BY cp.Orden
-        `);
-    
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            cp.CategoriaID AS "id",
+            cp.Codigo AS "codigo",
+            cp.Nombre AS "nombre",
+            cp.Orden AS "orden"
+        FROM CategoriaPlantilla cp
+        INNER JOIN TipoPlantilla tp ON cp.TipoPlantillaID = tp.TipoPlantillaID
+        WHERE tp.Codigo = $1 AND cp.Activo = TRUE
+        ORDER BY cp.Orden
+    `, [tipoCodigo]);
+    return result.rows;
 }
 
 /**
@@ -33,23 +28,18 @@ async function getCategoriasPorTipo(tipoCodigo) {
  */
 async function getPlantillasPorCategoria(categoriaId, empresaId) {
     const pool = getPool();
-    
-    const result = await pool.request()
-        .input('categoriaId', sql.Int, categoriaId)
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT 
-                p.PlantillaID AS id,
-                p.Nombre AS nombre,
-                p.Descripcion AS descripcion
-            FROM dbo.Plantilla p
-            WHERE p.CategoriaID = @categoriaId
-              AND p.EmpresaID = @empresaId
-              AND p.Activa = 1
-            ORDER BY p.Nombre
-        `);
-    
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            p.PlantillaID AS "id",
+            p.Nombre AS "nombre",
+            p.Descripcion AS "descripcion"
+        FROM Plantilla p
+        WHERE p.CategoriaID = $1
+          AND p.EmpresaID = $2
+          AND p.Activa = TRUE
+        ORDER BY p.Nombre
+    `, [categoriaId, empresaId]);
+    return result.rows;
 }
 
 /**
@@ -57,28 +47,24 @@ async function getPlantillasPorCategoria(categoriaId, empresaId) {
  */
 async function getPlantillasEmpresa(empresaId) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT
-                p.PlantillaID AS id,
-                p.Nombre AS nombre,
-                p.Descripcion AS descripcion,
-                tp.Codigo AS tipoCodigo,
-                tp.Nombre AS tipoNombre,
-                cp.CategoriaID AS categoriaId,
-                cp.Nombre AS categoriaNombre,
-                (SELECT COUNT(*) FROM dbo.PlantillaItem pi
-                 WHERE pi.PlantillaID = p.PlantillaID AND pi.Activo = 1) AS totalItems
-            FROM dbo.Plantilla p
-            INNER JOIN dbo.TipoPlantilla tp ON p.TipoPlantillaID = tp.TipoPlantillaID
-            INNER JOIN dbo.CategoriaPlantilla cp ON p.CategoriaID = cp.CategoriaID
-            WHERE p.EmpresaID = @empresaId AND p.Activa = 1
-            ORDER BY tp.Codigo, cp.Orden, p.Nombre
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            p.PlantillaID AS "id",
+            p.Nombre AS "nombre",
+            p.Descripcion AS "descripcion",
+            tp.Codigo AS "tipoCodigo",
+            tp.Nombre AS "tipoNombre",
+            cp.CategoriaID AS "categoriaId",
+            cp.Nombre AS "categoriaNombre",
+            (SELECT COUNT(*) FROM PlantillaItem pi
+             WHERE pi.PlantillaID = p.PlantillaID AND pi.Activo = TRUE) AS "totalItems"
+        FROM Plantilla p
+        INNER JOIN TipoPlantilla tp ON p.TipoPlantillaID = tp.TipoPlantillaID
+        INNER JOIN CategoriaPlantilla cp ON p.CategoriaID = cp.CategoriaID
+        WHERE p.EmpresaID = $1 AND p.Activa = TRUE
+        ORDER BY tp.Codigo, cp.Orden, p.Nombre
+    `, [empresaId]);
+    return result.rows;
 }
 
 /**
@@ -88,31 +74,26 @@ async function crearPlantilla(empresaId, nombre, descripcion, tipoCodigo, catego
     const pool = getPool();
 
     // Obtener el TipoPlantillaID a partir del código
-    const tipoResult = await pool.request()
-        .input('tipoCodigo', sql.VarChar(20), tipoCodigo)
-        .query(`SELECT TipoPlantillaID FROM dbo.TipoPlantilla WHERE Codigo = @tipoCodigo`);
+    const tipoResult = await pool.query(
+        `SELECT TipoPlantillaID AS "tipoPlantillaId" FROM TipoPlantilla WHERE Codigo = $1`,
+        [tipoCodigo]
+    );
 
-    if (tipoResult.recordset.length === 0) {
+    if (tipoResult.rows.length === 0) {
         throw new Error('Tipo de plantilla no encontrado');
     }
 
-    const tipoPlantillaId = tipoResult.recordset[0].TipoPlantillaID;
+    const tipoPlantillaId = tipoResult.rows[0].tipoPlantillaId;
 
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('tipoPlantillaId', sql.Int, tipoPlantillaId)
-        .input('categoriaId', sql.Int, categoriaId)
-        .input('nombre', sql.NVarChar(100), nombre)
-        .input('descripcion', sql.NVarChar(500), descripcion || null)
-        .query(`
-            INSERT INTO dbo.Plantilla
-                (EmpresaID, TipoPlantillaID, CategoriaID, Nombre, Descripcion, CreadoPor)
-            OUTPUT INSERTED.PlantillaID AS id, INSERTED.Nombre AS nombre
-            VALUES
-                (@empresaId, @tipoPlantillaId, @categoriaId, @nombre, @descripcion, 'CONFIG')
-        `);
+    const result = await pool.query(`
+        INSERT INTO Plantilla
+            (EmpresaID, TipoPlantillaID, CategoriaID, Nombre, Descripcion, CreadoPor)
+        VALUES
+            ($1, $2, $3, $4, $5, 'CONFIG')
+        RETURNING PlantillaID AS "id", Nombre AS "nombre"
+    `, [empresaId, tipoPlantillaId, categoriaId, nombre, descripcion || null]);
 
-    return result.recordset[0];
+    return result.rows[0];
 }
 
 /**
@@ -120,17 +101,13 @@ async function crearPlantilla(empresaId, nombre, descripcion, tipoCodigo, catego
  */
 async function eliminarPlantilla(plantillaId) {
     const pool = getPool();
-
-    await pool.request()
-        .input('plantillaId', sql.Int, plantillaId)
-        .query(`
-            UPDATE dbo.Plantilla
-            SET Activa = 0,
-                FechaModificacion = GETDATE(),
-                ModificadoPor = 'CONFIG'
-            WHERE PlantillaID = @plantillaId
-        `);
-
+    await pool.query(`
+        UPDATE Plantilla
+        SET Activa = FALSE,
+            FechaModificacion = NOW(),
+            ModificadoPor = 'CONFIG'
+        WHERE PlantillaID = $1
+    `, [plantillaId]);
     return { success: true };
 }
 
@@ -139,24 +116,20 @@ async function eliminarPlantilla(plantillaId) {
  */
 async function getItemsPlantilla(plantillaId) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('plantillaId', sql.Int, plantillaId)
-        .query(`
-            SELECT
-                ItemID AS id,
-                Titulo AS titulo,
-                Descripcion AS descripcion,
-                Orden AS orden,
-                TipoRespuesta AS tipoRespuesta,
-                EsCritico AS esCritico,
-                RequiereEvidencia AS requiereEvidencia
-            FROM dbo.PlantillaItem
-            WHERE PlantillaID = @plantillaId AND Activo = 1
-            ORDER BY Orden
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            ItemID AS "id",
+            Titulo AS "titulo",
+            Descripcion AS "descripcion",
+            Orden AS "orden",
+            TipoRespuesta AS "tipoRespuesta",
+            EsCritico AS "esCritico",
+            RequiereEvidencia AS "requiereEvidencia"
+        FROM PlantillaItem
+        WHERE PlantillaID = $1 AND Activo = TRUE
+        ORDER BY Orden
+    `, [plantillaId]);
+    return result.rows;
 }
 
 /**
@@ -166,32 +139,23 @@ async function crearItem(plantillaId, titulo, descripcion, tipoRespuesta, esCrit
     const pool = getPool();
 
     // Calcular el siguiente orden
-    const ordenResult = await pool.request()
-        .input('plantillaId', sql.Int, plantillaId)
-        .query(`
-            SELECT ISNULL(MAX(Orden), 0) + 1 AS siguienteOrden
-            FROM dbo.PlantillaItem
-            WHERE PlantillaID = @plantillaId
-        `);
+    const ordenResult = await pool.query(`
+        SELECT COALESCE(MAX(Orden), 0) + 1 AS "siguienteOrden"
+        FROM PlantillaItem
+        WHERE PlantillaID = $1
+    `, [plantillaId]);
 
-    const orden = ordenResult.recordset[0].siguienteOrden;
+    const orden = ordenResult.rows[0].siguienteOrden;
 
-    const result = await pool.request()
-        .input('plantillaId', sql.Int, plantillaId)
-        .input('titulo', sql.NVarChar(100), titulo)
-        .input('descripcion', sql.NVarChar(500), descripcion || null)
-        .input('orden', sql.Int, orden)
-        .input('tipoRespuesta', sql.VarChar(20), tipoRespuesta)
-        .input('esCritico', sql.Bit, esCritico ? 1 : 0)
-        .query(`
-            INSERT INTO dbo.PlantillaItem
-                (PlantillaID, Titulo, Descripcion, Orden, TipoRespuesta, EsCritico)
-            OUTPUT INSERTED.ItemID AS id, INSERTED.Titulo AS titulo
-            VALUES
-                (@plantillaId, @titulo, @descripcion, @orden, @tipoRespuesta, @esCritico)
-        `);
+    const result = await pool.query(`
+        INSERT INTO PlantillaItem
+            (PlantillaID, Titulo, Descripcion, Orden, TipoRespuesta, EsCritico)
+        VALUES
+            ($1, $2, $3, $4, $5, $6)
+        RETURNING ItemID AS "id", Titulo AS "titulo"
+    `, [plantillaId, titulo, descripcion || null, orden, tipoRespuesta, esCritico ? true : false]);
 
-    return result.recordset[0];
+    return result.rows[0];
 }
 
 /**
@@ -199,15 +163,11 @@ async function crearItem(plantillaId, titulo, descripcion, tipoRespuesta, esCrit
  */
 async function eliminarItem(itemId) {
     const pool = getPool();
-
-    await pool.request()
-        .input('itemId', sql.Int, itemId)
-        .query(`
-            UPDATE dbo.PlantillaItem
-            SET Activo = 0
-            WHERE ItemID = @itemId
-        `);
-
+    await pool.query(`
+        UPDATE PlantillaItem
+        SET Activo = FALSE
+        WHERE ItemID = $1
+    `, [itemId]);
     return { success: true };
 }
 

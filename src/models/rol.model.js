@@ -1,28 +1,24 @@
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 
 /**
  * Listar roles de una empresa
  */
 async function getRoles(empresaId) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT
-                RolID AS id,
-                Codigo AS codigo,
-                Nombre AS nombre,
-                Descripcion AS descripcion,
-                RequiereSede AS requiereSede,
-                AccesoGlobal AS accesoGlobal,
-                Orden AS orden
-            FROM dbo.Rol
-            WHERE (EmpresaID = @empresaId OR EmpresaID IS NULL) AND Activo = 1
-            ORDER BY Orden
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            RolID AS "id",
+            Codigo AS "codigo",
+            Nombre AS "nombre",
+            Descripcion AS "descripcion",
+            RequiereSede AS "requiereSede",
+            AccesoGlobal AS "accesoGlobal",
+            Orden AS "orden"
+        FROM Rol
+        WHERE (EmpresaID = $1 OR EmpresaID IS NULL) AND Activo = TRUE
+        ORDER BY Orden
+    `, [empresaId]);
+    return result.rows;
 }
 
 /**
@@ -32,36 +28,32 @@ async function getMatrizPermisos(empresaId) {
     const pool = getPool();
 
     // 1. Roles
-    const rolesResult = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT RolID AS id, Codigo AS codigo, Nombre AS nombre, Orden AS orden
-            FROM dbo.Rol
-            WHERE (EmpresaID = @empresaId OR EmpresaID IS NULL) AND Activo = 1
-            ORDER BY Orden
-        `);
+    const rolesResult = await pool.query(`
+        SELECT RolID AS "id", Codigo AS "codigo", Nombre AS "nombre", Orden AS "orden"
+        FROM Rol
+        WHERE (EmpresaID = $1 OR EmpresaID IS NULL) AND Activo = TRUE
+        ORDER BY Orden
+    `, [empresaId]);
 
     // 2. Permisos
-    const permisosResult = await pool.request()
-        .query(`
-            SELECT PermisoID AS id, Codigo AS codigo, Nombre AS nombre,
-                   Descripcion AS descripcion, Modulo AS modulo, Orden AS orden
-            FROM dbo.Permiso
-            WHERE Activo = 1
-            ORDER BY Orden
-        `);
+    const permisosResult = await pool.query(`
+        SELECT PermisoID AS "id", Codigo AS "codigo", Nombre AS "nombre",
+               Descripcion AS "descripcion", Modulo AS "modulo", Orden AS "orden"
+        FROM Permiso
+        WHERE Activo = TRUE
+        ORDER BY Orden
+    `);
 
-    // 3. Asignaciones (qué permiso tiene cada rol)
-    const asignacionesResult = await pool.request()
-        .query(`
-            SELECT RolID AS rolId, PermisoID AS permisoId, Habilitado AS habilitado
-            FROM dbo.RolPermiso
-        `);
+    // 3. Asignaciones
+    const asignacionesResult = await pool.query(`
+        SELECT RolID AS "rolId", PermisoID AS "permisoId", Habilitado AS "habilitado"
+        FROM RolPermiso
+    `);
 
     return {
-        roles: rolesResult.recordset,
-        permisos: permisosResult.recordset,
-        asignaciones: asignacionesResult.recordset
+        roles: rolesResult.rows,
+        permisos: permisosResult.rows,
+        asignaciones: asignacionesResult.rows
     };
 }
 
@@ -72,36 +64,25 @@ async function actualizarPermisoRol(rolId, permisoId, habilitado) {
     const pool = getPool();
 
     // Verificar si ya existe la asignación
-    const existeResult = await pool.request()
-        .input('rolId', sql.Int, rolId)
-        .input('permisoId', sql.Int, permisoId)
-        .query(`
-            SELECT COUNT(*) AS total
-            FROM dbo.RolPermiso
-            WHERE RolID = @rolId AND PermisoID = @permisoId
-        `);
+    const existeResult = await pool.query(`
+        SELECT COUNT(*) AS total
+        FROM RolPermiso
+        WHERE RolID = $1 AND PermisoID = $2
+    `, [rolId, permisoId]);
 
-    if (existeResult.recordset[0].total > 0) {
+    if (parseInt(existeResult.rows[0].total) > 0) {
         // Actualizar
-        await pool.request()
-            .input('rolId', sql.Int, rolId)
-            .input('permisoId', sql.Int, permisoId)
-            .input('habilitado', sql.Bit, habilitado ? 1 : 0)
-            .query(`
-                UPDATE dbo.RolPermiso
-                SET Habilitado = @habilitado
-                WHERE RolID = @rolId AND PermisoID = @permisoId
-            `);
+        await pool.query(`
+            UPDATE RolPermiso
+            SET Habilitado = $3
+            WHERE RolID = $1 AND PermisoID = $2
+        `, [rolId, permisoId, habilitado]);
     } else {
         // Insertar
-        await pool.request()
-            .input('rolId', sql.Int, rolId)
-            .input('permisoId', sql.Int, permisoId)
-            .input('habilitado', sql.Bit, habilitado ? 1 : 0)
-            .query(`
-                INSERT INTO dbo.RolPermiso (RolID, PermisoID, Habilitado)
-                VALUES (@rolId, @permisoId, @habilitado)
-            `);
+        await pool.query(`
+            INSERT INTO RolPermiso (RolID, PermisoID, Habilitado)
+            VALUES ($1, $2, $3)
+        `, [rolId, permisoId, habilitado]);
     }
 
     return { success: true };

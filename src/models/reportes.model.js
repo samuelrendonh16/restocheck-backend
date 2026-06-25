@@ -1,4 +1,4 @@
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 
 /**
  * Real-Time Compliance: progreso de cada sede en un rango de fechas
@@ -6,37 +6,33 @@ const { getPool, sql } = require('../config/database');
 async function getCompliancePorSede(empresaId, fechaInicio, fechaFin) {
     const pool = getPool();
 
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('fechaInicio', sql.Date, fechaInicio)
-        .input('fechaFin', sql.Date, fechaFin)
-        .query(`
-            SELECT
-                s.SedeID AS sedeId,
-                s.Nombre AS nombre,
-                ts.Nombre AS tipoSede,
-                COUNT(e.EjecucionID) AS totalEjecuciones,
-                SUM(CASE WHEN e.Estado = 'COMPLETADA' THEN 1 ELSE 0 END) AS completadas,
-                AVG(CASE WHEN e.Estado = 'COMPLETADA' THEN e.PorcentajeCumplimiento END) AS promedioCumplimiento,
-                MAX(e.FechaCreacion) AS ultimaActividad
-            FROM dbo.Sede s
-            INNER JOIN dbo.TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
-            LEFT JOIN dbo.Ejecucion e ON s.SedeID = e.SedeID
-                AND e.FechaEjecucion >= @fechaInicio
-                AND e.FechaEjecucion <= @fechaFin
-            WHERE s.EmpresaID = @empresaId AND s.Activa = 1
-            GROUP BY s.SedeID, s.Nombre, ts.Nombre
-            ORDER BY s.Nombre
-        `);
+    const result = await pool.query(`
+        SELECT
+            s.SedeID AS "sedeId",
+            s.Nombre AS "nombre",
+            ts.Nombre AS "tipoSede",
+            COUNT(e.EjecucionID) AS "totalEjecuciones",
+            SUM(CASE WHEN e.Estado = 'COMPLETADA' THEN 1 ELSE 0 END) AS "completadas",
+            AVG(CASE WHEN e.Estado = 'COMPLETADA' THEN e.PorcentajeCumplimiento END) AS "promedioCumplimiento",
+            MAX(e.FechaCreacion) AS "ultimaActividad"
+        FROM Sede s
+        INNER JOIN TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
+        LEFT JOIN Ejecucion e ON s.SedeID = e.SedeID
+            AND e.FechaEjecucion >= $2
+            AND e.FechaEjecucion <= $3
+        WHERE s.EmpresaID = $1 AND s.Activa = TRUE
+        GROUP BY s.SedeID, s.Nombre, ts.Nombre
+        ORDER BY s.Nombre
+    `, [empresaId, fechaInicio, fechaFin]);
 
-    return result.recordset.map(sede => ({
+    return result.rows.map(sede => ({
         sedeId: sede.sedeId,
         nombre: sede.nombre,
         tipoSede: sede.tipoSede,
-        totalEjecuciones: sede.totalEjecuciones,
-        completadas: sede.completadas,
+        totalEjecuciones: parseInt(sede.totalEjecuciones),
+        completadas: parseInt(sede.completadas) || 0,
         progreso: sede.promedioCumplimiento !== null
-            ? Math.round(sede.promedioCumplimiento)
+            ? Math.round(parseFloat(sede.promedioCumplimiento))
             : 0,
         ultimaActividad: sede.ultimaActividad
     }));
@@ -48,32 +44,28 @@ async function getCompliancePorSede(empresaId, fechaInicio, fechaFin) {
 async function getIncidencias(empresaId, fechaInicio, fechaFin) {
     const pool = getPool();
 
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('fechaInicio', sql.Date, fechaInicio)
-        .input('fechaFin', sql.Date, fechaFin)
-        .query(`
-            SELECT
-                ed.DetalleID AS detalleId,
-                ed.TituloItem AS titulo,
-                ed.Observacion AS observacion,
-                ed.EsCritico AS esCritico,
-                ed.FechaRespuesta AS fechaRespuesta,
-                e.EjecucionID AS ejecucionId,
-                e.NombrePlantilla AS plantilla,
-                e.NombreSede AS sede,
-                e.FechaEjecucion AS fechaEjecucion
-            FROM dbo.EjecucionDetalle ed
-            INNER JOIN dbo.Ejecucion e ON ed.EjecucionID = e.EjecucionID
-            INNER JOIN dbo.Sede s ON e.SedeID = s.SedeID
-            WHERE s.EmpresaID = @empresaId
-                AND ed.Resultado = 'NO_CUMPLE'
-                AND e.FechaEjecucion >= @fechaInicio
-                AND e.FechaEjecucion <= @fechaFin
-            ORDER BY ed.EsCritico DESC, e.FechaEjecucion DESC
-        `);
+    const result = await pool.query(`
+        SELECT
+            ed.DetalleID AS "detalleId",
+            ed.TituloItem AS "titulo",
+            ed.Observacion AS "observacion",
+            ed.EsCritico AS "esCritico",
+            ed.FechaRespuesta AS "fechaRespuesta",
+            e.EjecucionID AS "ejecucionId",
+            e.NombrePlantilla AS "plantilla",
+            e.NombreSede AS "sede",
+            e.FechaEjecucion AS "fechaEjecucion"
+        FROM EjecucionDetalle ed
+        INNER JOIN Ejecucion e ON ed.EjecucionID = e.EjecucionID
+        INNER JOIN Sede s ON e.SedeID = s.SedeID
+        WHERE s.EmpresaID = $1
+            AND ed.Resultado = 'NO_CUMPLE'
+            AND e.FechaEjecucion >= $2
+            AND e.FechaEjecucion <= $3
+        ORDER BY ed.EsCritico DESC, e.FechaEjecucion DESC
+    `, [empresaId, fechaInicio, fechaFin]);
 
-    return result.recordset.map(inc => ({
+    return result.rows.map(inc => ({
         detalleId: inc.detalleId,
         titulo: inc.titulo,
         observacion: inc.observacion,
@@ -90,37 +82,33 @@ async function getIncidencias(empresaId, fechaInicio, fechaFin) {
 async function getRankingSedes(empresaId, fechaInicio, fechaFin) {
     const pool = getPool();
 
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('fechaInicio', sql.Date, fechaInicio)
-        .input('fechaFin', sql.Date, fechaFin)
-        .query(`
-            SELECT
-                s.SedeID AS sedeId,
-                s.Nombre AS nombre,
-                ts.Nombre AS tipoSede,
-                COUNT(e.EjecucionID) AS totalEjecuciones,
-                AVG(CASE WHEN e.Estado = 'COMPLETADA' THEN e.PorcentajeCumplimiento END) AS promedioCumplimiento
-            FROM dbo.Sede s
-            INNER JOIN dbo.TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
-            INNER JOIN dbo.Ejecucion e ON s.SedeID = e.SedeID
-                AND e.FechaEjecucion >= @fechaInicio
-                AND e.FechaEjecucion <= @fechaFin
-                AND e.Estado = 'COMPLETADA'
-            WHERE s.EmpresaID = @empresaId AND s.Activa = 1
-            GROUP BY s.SedeID, s.Nombre, ts.Nombre
-            HAVING COUNT(e.EjecucionID) > 0
-            ORDER BY promedioCumplimiento DESC
-        `);
+    const result = await pool.query(`
+        SELECT
+            s.SedeID AS "sedeId",
+            s.Nombre AS "nombre",
+            ts.Nombre AS "tipoSede",
+            COUNT(e.EjecucionID) AS "totalEjecuciones",
+            AVG(CASE WHEN e.Estado = 'COMPLETADA' THEN e.PorcentajeCumplimiento END) AS "promedioCumplimiento"
+        FROM Sede s
+        INNER JOIN TipoSede ts ON s.TipoSedeID = ts.TipoSedeID
+        INNER JOIN Ejecucion e ON s.SedeID = e.SedeID
+            AND e.FechaEjecucion >= $2
+            AND e.FechaEjecucion <= $3
+            AND e.Estado = 'COMPLETADA'
+        WHERE s.EmpresaID = $1 AND s.Activa = TRUE
+        GROUP BY s.SedeID, s.Nombre, ts.Nombre
+        HAVING COUNT(e.EjecucionID) > 0
+        ORDER BY AVG(CASE WHEN e.Estado = 'COMPLETADA' THEN e.PorcentajeCumplimiento END) DESC
+    `, [empresaId, fechaInicio, fechaFin]);
 
-    return result.recordset.map((sede, index) => ({
+    return result.rows.map((sede, index) => ({
         posicion: index + 1,
         sedeId: sede.sedeId,
         nombre: sede.nombre,
         tipoSede: sede.tipoSede,
-        totalEjecuciones: sede.totalEjecuciones,
+        totalEjecuciones: parseInt(sede.totalEjecuciones),
         promedio: sede.promedioCumplimiento !== null
-            ? Math.round(sede.promedioCumplimiento)
+            ? Math.round(parseFloat(sede.promedioCumplimiento))
             : 0
     }));
 }

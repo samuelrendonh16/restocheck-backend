@@ -1,34 +1,30 @@
-const { getPool, sql } = require('../config/database');
+const { getPool } = require('../config/database');
 
 /**
  * Listar usuarios de una empresa
  */
 async function getUsuarios(empresaId) {
     const pool = getPool();
-
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .query(`
-            SELECT
-                u.UsuarioID AS id,
-                u.NombreCompleto AS nombreCompleto,
-                u.NombreUsuario AS nombreUsuario,
-                u.Email AS email,
-                r.RolID AS rolId,
-                r.Nombre AS rolNombre,
-                r.Codigo AS rolCodigo,
-                r.EsSistema AS rolEsSistema,
-                s.SedeID AS sedeId,
-                s.Nombre AS sedeNombre
-            FROM dbo.Usuario u
-            INNER JOIN dbo.Rol r ON u.RolID = r.RolID
-            LEFT JOIN dbo.UsuarioSede us ON u.UsuarioID = us.UsuarioID AND us.EsPrincipal = 1
-            LEFT JOIN dbo.Sede s ON us.SedeID = s.SedeID
-            WHERE u.EmpresaID = @empresaId AND u.Activo = 1
-            ORDER BY u.NombreCompleto
-        `);
-
-    return result.recordset;
+    const result = await pool.query(`
+        SELECT
+            u.UsuarioID AS "id",
+            u.NombreCompleto AS "nombreCompleto",
+            u.NombreUsuario AS "nombreUsuario",
+            u.Email AS "email",
+            r.RolID AS "rolId",
+            r.Nombre AS "rolNombre",
+            r.Codigo AS "rolCodigo",
+            r.EsSistema AS "rolEsSistema",
+            s.SedeID AS "sedeId",
+            s.Nombre AS "sedeNombre"
+        FROM Usuario u
+        INNER JOIN Rol r ON u.RolID = r.RolID
+        LEFT JOIN UsuarioSede us ON u.UsuarioID = us.UsuarioID AND us.EsPrincipal = TRUE
+        LEFT JOIN Sede s ON us.SedeID = s.SedeID
+        WHERE u.EmpresaID = $1 AND u.Activo = TRUE
+        ORDER BY u.NombreCompleto
+    `, [empresaId]);
+    return result.rows;
 }
 
 /**
@@ -41,7 +37,7 @@ async function generarNombreUsuario(nombreCompleto) {
     const limpio = nombreCompleto
         .toLowerCase()
         .normalize('NFD').replace(/[̀-ͯ]/g, '') // quitar tildes
-        .replace(/[^a-z\s]/g, '')                          // solo letras y espacios
+        .replace(/[^a-z\s]/g, '')                         // solo letras y espacios
         .trim()
         .split(/\s+/);
 
@@ -54,11 +50,12 @@ async function generarNombreUsuario(nombreCompleto) {
     let contador = 1;
 
     while (true) {
-        const result = await pool.request()
-            .input('nombreUsuario', sql.VarChar(50), candidato)
-            .query(`SELECT COUNT(*) AS total FROM dbo.Usuario WHERE NombreUsuario = @nombreUsuario`);
+        const result = await pool.query(
+            `SELECT COUNT(*) AS total FROM Usuario WHERE NombreUsuario = $1`,
+            [candidato]
+        );
 
-        if (result.recordset[0].total === 0) {
+        if (parseInt(result.rows[0].total) === 0) {
             return candidato;
         }
 
@@ -73,38 +70,26 @@ async function generarNombreUsuario(nombreCompleto) {
 async function crearUsuario(empresaId, nombreCompleto, rolId, sedeId, password) {
     const pool = getPool();
 
-    // 1. Generar nombre de usuario único
     const nombreUsuario = await generarNombreUsuario(nombreCompleto);
 
-    // 2. Insertar usuario con la contraseña proporcionada (RequiereCambioPass = 0)
-    const result = await pool.request()
-        .input('empresaId', sql.Int, empresaId)
-        .input('rolId', sql.Int, rolId)
-        .input('nombreCompleto', sql.NVarChar(100), nombreCompleto)
-        .input('nombreUsuario', sql.VarChar(50), nombreUsuario)
-        .input('password', sql.NVarChar(100), password)
-        .query(`
-            DECLARE @Salt VARBINARY(32) = CRYPT_GEN_RANDOM(32);
+    // INSERT ... SELECT permite generar el salt una vez y usarlo dos veces
+    const result = await pool.query(`
+        INSERT INTO Usuario
+            (EmpresaID, RolID, NombreCompleto, NombreUsuario, PasswordHash, PasswordSalt, RequiereCambioPass, CreadoPor)
+        SELECT
+            $1, $2, $3, $4,
+            fn_HashPassword($5, s.salt), s.salt, FALSE, 'CONFIG'
+        FROM (SELECT gen_random_bytes(32) AS salt) s
+        RETURNING UsuarioID AS "id", NombreUsuario AS "nombreUsuario"
+    `, [empresaId, rolId, nombreCompleto, nombreUsuario, password]);
 
-            INSERT INTO dbo.Usuario
-                (EmpresaID, RolID, NombreCompleto, NombreUsuario, PasswordHash, PasswordSalt, RequiereCambioPass, CreadoPor)
-            OUTPUT INSERTED.UsuarioID AS id, INSERTED.NombreUsuario AS nombreUsuario
-            VALUES
-                (@empresaId, @rolId, @nombreCompleto, @nombreUsuario,
-                 dbo.fn_HashPassword(@password, @Salt), @Salt, 0, 'CONFIG');
-        `);
+    const nuevoUsuario = result.rows[0];
 
-    const nuevoUsuario = result.recordset[0];
-
-    // 3. Asignar sede si se proporcionó
     if (sedeId) {
-        await pool.request()
-            .input('usuarioId', sql.Int, nuevoUsuario.id)
-            .input('sedeId', sql.Int, sedeId)
-            .query(`
-                INSERT INTO dbo.UsuarioSede (UsuarioID, SedeID, EsPrincipal)
-                VALUES (@usuarioId, @sedeId, 1)
-            `);
+        await pool.query(`
+            INSERT INTO UsuarioSede (UsuarioID, SedeID, EsPrincipal)
+            VALUES ($1, $2, TRUE)
+        `, [nuevoUsuario.id, sedeId]);
     }
 
     return {
@@ -118,17 +103,13 @@ async function crearUsuario(empresaId, nombreCompleto, rolId, sedeId, password) 
  */
 async function eliminarUsuario(usuarioId) {
     const pool = getPool();
-
-    await pool.request()
-        .input('usuarioId', sql.Int, usuarioId)
-        .query(`
-            UPDATE dbo.Usuario
-            SET Activo = 0,
-                FechaModificacion = GETDATE(),
-                ModificadoPor = 'CONFIG'
-            WHERE UsuarioID = @usuarioId
-        `);
-
+    await pool.query(`
+        UPDATE Usuario
+        SET Activo = FALSE,
+            FechaModificacion = NOW(),
+            ModificadoPor = 'CONFIG'
+        WHERE UsuarioID = $1
+    `, [usuarioId]);
     return { success: true };
 }
 
